@@ -4,8 +4,8 @@
 This project implements an operator precedence parser visualizer for arithmetic expressions. It demonstrates the shift-reduce parsing mechanism used in compiler design, providing step-by-step visualization of stack operations.
 
 ## Authors
-- **Niraj Kumar Maurya** (Roll No. 2408390109005)
-- **Meraj Ahamad** (Roll No. 2408390109004)
+- **Niraj Kumar Maurya**
+- **Meraj Ahamad**
 
 **Department of Computer Science and Engineering**
 **Rajkiya Engineering College, Kannauj**
