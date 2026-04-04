@@ -9,7 +9,6 @@ void displayMenu(void) {
     printf("╠════════════════════════════════════════════════════════════════════════════════╣\n");
     printf("║  Developed by:                                                                  ║\n");
     printf("║  Niraj Kumar Maurya (2408390109005)                                            ║\n");
-    printf("║  Meraj Ahamad (2408390109004)                                                   ║\n");
     printf("╠════════════════════════════════════════════════════════════════════════════════╣\n");
     printf("║  Department of Computer Science and Engineering                                 ║\n");
     printf("║  Rajkiya Engineering College, Kannauj                                           ║\n");
