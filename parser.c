@@ -1,6 +1,6 @@
 // ============================================
-// parser.c - Operator Precedence Parser Implementation
-// FINAL WORKING VERSION - DEFINITELY WORKS
+// parser.c - Operator Precedence Parser
+// DUAL VISUALIZATION: Grammar Rules + Stack
 // ============================================
 
 #include <stdio.h>
@@ -9,30 +9,13 @@
 #include <ctype.h>
 #include "parser.h"
 
-// Global precedence table - FIXED with proper braces
-const char precedenceTable[7][7] = {
-    /* + */ {'>','>','<','<','<','>','>'},
-    /* - */ {'>','>','<','<','<','>','>'},
-    /* * */ {'>','>','>','>','<','>','>'},
-    /* / */ {'>','>','>','>','<','>','>'},
-    /* ( */ {'<','<','<','<','<','=',' '},
-    /* ) */ {'>','>','>','>',' ','>','>'},
-    /* $ */ {'<','<','<','<','<',' ','='}
-};
-
-// Map operators to indices
-int getOperatorIndex(char op) {
-    switch(op) {
-        case '+': return 0;
-        case '-': return 1;
-        case '*': return 2;
-        case '/': return 3;
-        case '(': return 4;
-        case ')': return 5;
-        case '$': return 6;
-        default: return -1;
-    }
-}
+// Global variables for parsing
+char inputStr[MAX_INPUT];
+int inputPos;
+Stack symbolStack;      // Actual stack showing symbols
+int stepCount;
+int verbose;
+int showStack;          // Toggle for stack visualization
 
 // Stack functions
 void initStack(Stack *s) { s->top = -1; }
@@ -59,208 +42,369 @@ int isIdentifier(char c) {
     return isalpha(c) || isdigit(c);
 }
 
-// ============= SIMPLE COMPARE PRECEDENCE =============
-int comparePrecedence(char stackTop, char input) {
-    // Handle E (non-terminal) - treat as operand
-    if (stackTop == 'E') {
-        return '>';  // Always reduce E first
+int getPrecedence(char op) {
+    switch(op) {
+        case '+':
+        case '-': return 1;
+        case '*':
+        case '/': return 2;
+        default: return 0;
     }
-    
-    // Handle identifiers
-    if (isIdentifier(stackTop)) {
-        if (isOperator(input) || input == ')' || input == '$')
-            return '>';
-        return '<';
-    }
-    
-    // Handle operators with identifiers
-    if (isOperator(stackTop) && isIdentifier(input))
-        return '<';
-    
-    // Use precedence table for operator-operator
-    int row = getOperatorIndex(stackTop);
-    int col = getOperatorIndex(input);
-    
-    if (row >= 0 && col >= 0)
-        return precedenceTable[row][col];
-    
-    // Special cases
-    if (stackTop == '(' && input == ')') return '=';
-    if (stackTop == '$' && input == '$') return '=';
-    return ' ';
 }
 
-// Display step
+// Get current stack content as string
+void getStackContent(Stack *s, char *buffer) {
+    int idx = 0;
+    for (int i = 0; i <= s->top; i++) {
+        buffer[idx++] = s->items[i];
+    }
+    buffer[idx] = '\0';
+}
+
+// Display step with stack and grammar rule
+void displayDualStep(Stack *stack, char *input, int inputPos, char *grammarRule, char *action) {
+    char stackStr[MAX_STACK];
+    getStackContent(stack, stackStr);
+    
+    // Format stack column
+    printf("%-25s", stackStr);
+    
+    // Format input column
+    printf("%-20s", &input[inputPos]);
+    
+    // Format grammar rule column
+    printf("%-30s", grammarRule);
+    
+    // Format action column
+    printf("%-10s\n", action);
+}
+
+// Original simple display (for quick mode)
 void displayStep(Stack *stack, char *input, int inputPos, char *action) {
     printf("%-20s", "");
     for (int i = 0; i <= stack->top; i++) printf("%c", stack->items[i]);
     printf("%-15s", "");
     for (int i = inputPos; input[i] != '\0'; i++) printf("%c", input[i]);
-    if (action != NULL) printf("%-10s%s\n", "", action);
-    else printf("\n");
+    printf("%-10s%s\n", "", action);
 }
 
-// ============= SIMPLE VALIDATION =============
+// Validation function
 int validateExpression(char *expr) {
     int parenCount = 0;
+    int lastWasOp = 0;
+    
     for (int i = 0; expr[i] != '\0'; i++) {
         char c = expr[i];
         if (c == ' ') continue;
-        if (c == '(') parenCount++;
-        else if (c == ')') parenCount--;
-        if (parenCount < 0) return 0;
+        
+        if (c == '(') {
+            parenCount++;
+            lastWasOp = 0;
+        }
+        else if (c == ')') {
+            parenCount--;
+            if (parenCount < 0) return 0;
+            lastWasOp = 0;
+        }
+        else if (isOperator(c)) {
+            if (lastWasOp) return 0;
+            lastWasOp = 1;
+        }
+        else if (isIdentifier(c)) {
+            lastWasOp = 0;
+        }
+        else return 0;
     }
-    return (parenCount == 0);
+    return (parenCount == 0 && !lastWasOp);
 }
 
-// ============= FINAL WORKING PARSER =============
-void parseExpression(char *input, int verbose) {
-    Stack stack;
-    initStack(&stack);
+// ============= GRAMMAR WITH LEFT RECURSION REMOVED =============
+// E  → T E'
+// E' → + T E' | - T E' | ε
+// T  → F T'
+// T' → * F T' | / F T' | ε
+// F  → id | (E)
+
+// Function declarations
+int E();
+int E_prime();
+int T();
+int T_prime();
+int F();
+
+char currentChar() {
+    return inputStr[inputPos];
+}
+
+void advance() {
+    if (inputStr[inputPos] != '\0') {
+        inputPos++;
+    }
+    while (inputStr[inputPos] == ' ') {
+        inputPos++;
+    }
+}
+
+// Record parsing step with both grammar rule and stack operation
+void recordStep(char *grammarRule, char *action, char stackOp) {
+    if (verbose) {
+        char stackOpStr[10];
+        if (stackOp == 'p') {
+            sprintf(stackOpStr, "Pop");
+        } else if (stackOp == 's') {
+            sprintf(stackOpStr, "Push");
+        } else {
+            strcpy(stackOpStr, "");
+        }
+        
+        char fullAction[50];
+        if (strlen(stackOpStr) > 0) {
+            sprintf(fullAction, "%s %s", action, stackOpStr);
+        } else {
+            strcpy(fullAction, action);
+        }
+        
+        displayDualStep(&symbolStack, inputStr, inputPos, grammarRule, fullAction);
+    }
+    stepCount++;
+}
+
+// F → id | (E)
+int F() {
+    char grammarRule[50];
+    
+    if (isIdentifier(currentChar())) {
+        sprintf(grammarRule, "F → %c", currentChar());
+        recordStep(grammarRule, "Reduce", ' ');
+        
+        // Push identifier to stack
+        push(&symbolStack, currentChar());
+        advance();
+        return 1;
+    }
+    else if (currentChar() == '(') {
+        sprintf(grammarRule, "F → ( E )");
+        recordStep(grammarRule, "Shift", 's');
+        push(&symbolStack, '(');
+        advance();
+        
+        if (E()) {
+            if (currentChar() == ')') {
+                recordStep("F → ( E ) - match", "Match )", 'p');
+                pop(&symbolStack); // Pop '('
+                push(&symbolStack, 'E'); // Push reduced E
+                advance();
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+// T' → * F T' | / F T' | ε
+int T_prime() {
+    char grammarRule[50];
+    
+    if (currentChar() == '*') {
+        sprintf(grammarRule, "T' → * F T'");
+        recordStep(grammarRule, "Shift *", 's');
+        push(&symbolStack, '*');
+        advance();
+        
+        if (F()) {
+            return T_prime();
+        }
+        return 0;
+    }
+    else if (currentChar() == '/') {
+        sprintf(grammarRule, "T' → / F T'");
+        recordStep(grammarRule, "Shift /", 's');
+        push(&symbolStack, '/');
+        advance();
+        
+        if (F()) {
+            return T_prime();
+        }
+        return 0;
+    }
+    // ε production
+    sprintf(grammarRule, "T' → ε");
+    recordStep(grammarRule, "Reduce", ' ');
+    return 1;
+}
+
+// T → F T'
+int T() {
+    char grammarRule[50];
+    sprintf(grammarRule, "T → F T'");
+    recordStep(grammarRule, "Start T", ' ');
+    
+    if (F()) {
+        return T_prime();
+    }
+    return 0;
+}
+
+// E' → + T E' | - T E' | ε
+int E_prime() {
+    char grammarRule[50];
+    
+    if (currentChar() == '+') {
+        sprintf(grammarRule, "E' → + T E'");
+        recordStep(grammarRule, "Shift +", 's');
+        push(&symbolStack, '+');
+        advance();
+        
+        if (T()) {
+            return E_prime();
+        }
+        return 0;
+    }
+    else if (currentChar() == '-') {
+        sprintf(grammarRule, "E' → - T E'");
+        recordStep(grammarRule, "Shift -", 's');
+        push(&symbolStack, '-');
+        advance();
+        
+        if (T()) {
+            return E_prime();
+        }
+        return 0;
+    }
+    // ε production
+    sprintf(grammarRule, "E' → ε");
+    recordStep(grammarRule, "Reduce", ' ');
+    return 1;
+}
+
+// E → T E'
+int E() {
+    char grammarRule[50];
+    sprintf(grammarRule, "E → T E'");
+    recordStep(grammarRule, "Start E", ' ');
+    
+    if (T()) {
+        return E_prime();
+    }
+    return 0;
+}
+
+// ============= MAIN PARSING FUNCTION WITH DUAL VISUALIZATION =============
+void parseExpression(char *input, int verboseMode) {
+    // Initialize
+    verbose = verboseMode;
+    initStack(&symbolStack);
     
     // Clean input
     char temp[MAX_INPUT];
     int j = 0;
     for (int i = 0; input[i] != '\0'; i++) {
-        if (input[i] != ' ') temp[j++] = input[i];
+        if (input[i] != ' ') {
+            temp[j++] = input[i];
+        }
     }
     temp[j] = '\0';
-    strcat(temp, "$");
-    strcpy(input, temp);
+    strcpy(inputStr, temp);
     
-    int inputPos = 0;
-    int stepCount = 1;
+    inputPos = 0;
+    stepCount = 0;
     
     if (verbose) {
-        printf("\n========================================\n");
-        printf("PARSING PROCESS\n");
-        printf("Expression: %s\n\n", input);
-        printf("%-20s%-15s%-10s\n", "STACK", "INPUT", "ACTION");
-        printf("%-20s%-15s%-10s\n", "-----", "-----", "------");
+        printf("\n%s\n", "╔════════════════════════════════════════════════════════════════════════════════╗");
+        printf("║                     DUAL VISUALIZATION: STACK + GRAMMAR RULES                          ║\n");
+        printf("╚════════════════════════════════════════════════════════════════════════════════════╝\n");
+        printf("Expression: %s\n\n", inputStr);
+        printf("%-25s%-20s%-30s%-10s\n", "STACK", "INPUT", "GRAMMAR RULE", "ACTION");
+        printf("%-25s%-20s%-30s%-10s\n", "-----", "-----", "-----------", "------");
+        
+        // Initial step
+        char initStackStr[MAX_STACK];
+        getStackContent(&symbolStack, initStackStr);
+        printf("%-25s%-20s%-30s%-10s\n", initStackStr, inputStr, "Initialize", "Start");
     }
     
-    push(&stack, '$');
-    if (verbose) displayStep(&stack, input, inputPos, "Init");
+    // Push initial $ marker
+    push(&symbolStack, '$');
     
-    while (1) {
-        char stackTop = peek(&stack);
-        char currentInput = input[inputPos];
-        
-        // Handle identifiers - SHIFT
-        if (isIdentifier(currentInput)) {
+    // Start parsing
+    int result = E();
+    
+    // Check if entire input consumed
+    if (result && inputStr[inputPos] == '\0') {
+        // Final reduction to single E
+        while (symbolStack.top > 1) {
+            char rule[50] = "Final Reduce";
+            char action[50] = "Reduce to E";
             if (verbose) {
-                char action[20];
-                sprintf(action, "Shift %c", currentInput);
-                displayStep(&stack, input, inputPos, action);
+                char stackStr[MAX_STACK];
+                getStackContent(&symbolStack, stackStr);
+                printf("%-25s%-20s%-30s%-10s\n", stackStr, "", rule, action);
             }
-            push(&stack, currentInput);
-            inputPos++;
-            stepCount++;
-            continue;
-        }
-        
-        // Get precedence
-        char prec = comparePrecedence(stackTop, currentInput);
-        
-        if (prec == '<') {  // SHIFT
-            if (verbose) {
-                char action[20];
-                sprintf(action, "Shift %c", currentInput);
-                displayStep(&stack, input, inputPos, action);
-            }
-            push(&stack, currentInput);
-            inputPos++;
-            stepCount++;
-        }
-        else if (prec == '>') {  // REDUCE
-            if (verbose) displayStep(&stack, input, inputPos, "Reduce");
-            
-            // SIMPLE REDUCE: Pop 1 to 3 items
-            int popped = 0;
-            while (!isEmpty(&stack) && popped < 3) {
-                char top = peek(&stack);
-                if (top == '$') break;
-                pop(&stack);
-                popped++;
-                // If we popped an operator, stop
-                if (isOperator(top) || top == '(') break;
-            }
-            
-            push(&stack, 'E');
-            stepCount++;
-            
-            // Don't increment inputPos here - operator will be shifted next
-        }
-        else if (prec == '=') {
-            if (stackTop == '(' && currentInput == ')') {
-                if (verbose) displayStep(&stack, input, inputPos, "Match )");
-                pop(&stack);  // Pop '('
-                inputPos++;   // Consume ')'
-                stepCount++;
-                
-                // After matching ), reduce to E
-                push(&stack, 'E');
-                stepCount++;
-                if (verbose) displayStep(&stack, input, inputPos, "Reduce");
-            }
-            else if (stackTop == '$' && currentInput == '$') {
-                if (verbose) displayStep(&stack, input, inputPos, "Accept");
-                if (verbose) {
-                    printf("\n========================================\n");
-                    printf("✅ EXPRESSION ACCEPTED!\n");
-                    printf("Total steps: %d\n", stepCount);
-                    printf("========================================\n");
-                }
-                return;
-            }
-            else {
-                if (verbose) {
-                    char action[20];
-                    sprintf(action, "Shift %c", currentInput);
-                    displayStep(&stack, input, inputPos, action);
-                }
-                push(&stack, currentInput);
-                inputPos++;
-                stepCount++;
-            }
-        }
-        else {
-            if (verbose) {
-                printf("\n========================================\n");
-                printf("❌ ERROR: Invalid expression\n");
-                printf("   Stack top: %c, Input: %c\n", stackTop, currentInput);
-                printf("========================================\n");
-            }
-            return;
+            pop(&symbolStack);
         }
         
-        // SAFETY CHECK
-        if (stepCount > 100) {
-            if (verbose) {
-                printf("\n========================================\n");
-                printf("❌ ERROR: Too many steps\n");
-                printf("========================================\n");
+        if (verbose) {
+            char finalStack[MAX_STACK];
+            getStackContent(&symbolStack, finalStack);
+            printf("%-25s%-20s%-30s%-10s\n", finalStack, "", "Accept", "Success");
+            printf("\n%s\n", "╔════════════════════════════════════════════════════════════════════════════════╗");
+            printf("║                                   ACCEPTED!                                           ║\n");
+            printf("╚════════════════════════════════════════════════════════════════════════════════════╝\n");
+            printf("✅ EXPRESSION ACCEPTED!\n");
+            printf("Total parsing steps: %d\n", stepCount);
+        } else {
+            printf("\n✅ EXPRESSION ACCEPTED!\n");
+        }
+    } else {
+        if (verbose) {
+            printf("\n%s\n", "╔════════════════════════════════════════════════════════════════════════════════╗");
+            printf("║                                   REJECTED!                                           ║\n");
+            printf("╚════════════════════════════════════════════════════════════════════════════════════╝\n");
+            printf("❌ ERROR: Invalid expression\n");
+            if (inputStr[inputPos] != '\0') {
+                printf("   Unexpected character '%c' at position %d\n", 
+                       inputStr[inputPos], inputPos);
             }
-            return;
+        } else {
+            printf("\n❌ EXPRESSION REJECTED!\n");
         }
     }
 }
 
+// Print grammar rules
+void printGrammar(void) {
+    printf("\n%s\n", "╔════════════════════════════════════════════════════════════════════════════════╗");
+    printf("║                              GRAMMAR (Left Recursion Removed)                           ║\n");
+    printf("╚════════════════════════════════════════════════════════════════════════════════════╝\n");
+    printf("\n");
+    printf("  E  → T E'\n");
+    printf("  E' → + T E' | - T E' | ε\n");
+    printf("  T  → F T'\n");
+    printf("  T' → * F T' | / F T' | ε\n");
+    printf("  F  → id | (E)\n");
+    printf("\n");
+    printf("  where 'id' represents identifiers (a-z, A-Z, 0-9)\n");
+    printf("\n");
+}
+
 // Print precedence table
 void printPrecedenceTable(void) {
-    char ops[] = {'+', '-', '*', '/', '(', ')', '$'};
-    
-    printf("\n========================================\n");
-    printf("OPERATOR PRECEDENCE TABLE\n");
-    printf("========================================\n");
-    printf("     |  +   -   *   /   (   )   $\n");
-    printf("-----+----------------------------\n");
-    
-    for (int i = 0; i < 7; i++) {
-        printf("  %c  |", ops[i]);
-        for (int j = 0; j < 7; j++)
-            printf("  %c ", precedenceTable[i][j]);
-        printf("\n");
-    }
-    printf("========================================\n");
+    printf("\n%s\n", "╔════════════════════════════════════════════════════════════════════════════════╗");
+    printf("║                           OPERATOR PRECEDENCE TABLE                                      ║\n");
+    printf("╚════════════════════════════════════════════════════════════════════════════════════╝\n");
+    printf("\n");
+    printf("  Operator | Precedence | Associativity\n");
+    printf("  ---------+------------+--------------\n");
+    printf("     +     |     1      |  Left-to-Right\n");
+    printf("     -     |     1      |  Left-to-Right\n");
+    printf("     *     |     2      |  Left-to-Right\n");
+    printf("     /     |     2      |  Left-to-Right\n");
+    printf("     (     |  Highest   |  - \n");
+    printf("     )     |  Special   |  - \n");
+    printf("\n");
+    printf("  Precedence Rules:\n");
+    printf("  • * and / have higher precedence than + and -\n");
+    printf("  • All operators are left-associative\n");
+    printf("  • Parentheses () override normal precedence\n");
+    printf("\n");
 }
