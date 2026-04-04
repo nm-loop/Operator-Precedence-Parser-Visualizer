@@ -5,7 +5,6 @@ This project implements an operator precedence parser visualizer for arithmetic 
 
 ## Authors
 - **Niraj Kumar Maurya**
-- **Meraj Ahamad**
 
 **Department of Computer Science and Engineering**
 **Rajkiya Engineering College, Kannauj**
